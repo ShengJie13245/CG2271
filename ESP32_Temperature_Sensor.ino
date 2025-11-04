@@ -8,8 +8,8 @@
  * - DHT11 VCC -> 3.3V
  * - DHT11 GND -> GND  
  * - DHT11 DATA -> GPIO 4
- * - UART TX (GPIO 17) -> FRDM PTC3 (RX)
- * - UART RX (GPIO 16) -> FRDM PTC4 (TX)
+ * - UART TX (GPIO 1) -> FRDM PTE23 (RX)
+ * - UART RX (GPIO 2) -> FRDM PTE22 (TX)
  * - Common GND between ESP32 and FRDM
  */
 
@@ -28,13 +28,13 @@ const unsigned long TEMP_INTERVAL = 1000;  // Send temperature every 1 second
 void setup() {
   // Initialize serial communications
   Serial.begin(115200);      // USB serial for debugging
-  Serial2.begin(115200);     // UART for FRDM communication
+  Serial2.begin(115200, SERIAL_8N1, 2, 1);  // UART for FRDM communication (RX=GPIO2, TX=GPIO1)
   
   // Initialize DHT sensor
   dht.begin();
   
   Serial.println("ESP32 Smart Desk Assistant Temperature Sensor");
-  Serial.println("DHT11 on GPIO 4, UART on GPIO 16/17");
+  Serial.println("DHT11 on GPIO 4, UART on GPIO 1/2");
   Serial.println("Sending temperature data to FRDM board...");
   
   delay(2000);  // Give DHT sensor time to stabilize

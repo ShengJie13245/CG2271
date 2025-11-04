@@ -22,14 +22,14 @@ The Smart Desk Assistant integrates multiple sensors and actuators to create an 
 | Sound sensor (DO) | PTC6 | Digital | Noise detection (interrupt) |
 | Mode button | PTA4 | Digital | Mode switching (interrupt) |
 | RGB LED (R,G,B) | PTD5, PTD7, PTD6 | Output | Status indication |
-| Buzzer | PTD3 (TPM0_CH3) | PWM | Audio feedback |
-| UART TX/RX | PTC4/PTC3 | Communication | ESP32 interface |
+| Buzzer | PTC7 (TPM0_CH3) | PWM | Audio feedback |
+| UART TX/RX | PTE22/PTE23 | Communication | ESP32 interface |
 
 ### ESP32 Components
 | Component | Pin | Description |
 |-----------|-----|-------------|
 | DHT11 Temperature Sensor | GPIO 4 | Temperature/humidity reading |
-| UART TX/RX | GPIO 17/16 | FRDM communication |
+| UART TX/RX | GPIO 1/2 | FRDM communication |
 
 ## 🏗️ Software Architecture
 

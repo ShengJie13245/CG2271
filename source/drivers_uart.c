@@ -32,8 +32,8 @@ void UART_Init(void)
 
     lpuart_config_t config;
 
-    /* Enable PORTC clock */
-    CLOCK_EnableClock(kCLOCK_PortC);
+    /* Enable PORTE clock */
+    CLOCK_EnableClock(kCLOCK_PortE);
 
     /* Configure UART pins */
     PORT_SetPinMux(ESP32_UART_TX_PORT, ESP32_UART_TX_PIN, kPORT_MuxAlt3);

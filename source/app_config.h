@@ -47,9 +47,9 @@
 #define LED_B_PIN               6U
 
 /* Buzzer - PWM Output */
-#define BUZZER_PORT             PORTD
-#define BUZZER_GPIO             GPIOD
-#define BUZZER_PIN              3U
+#define BUZZER_PORT             PORTC
+#define BUZZER_GPIO             GPIOC
+#define BUZZER_PIN              7U
 #define BUZZER_TPM              TPM0
 #define BUZZER_TPM_CHANNEL      3U
 
@@ -58,10 +58,10 @@
 #define ESP32_UART_CLKSRC       kCLOCK_McgIrc48MClk
 #define ESP32_UART_CLK_FREQ     CLOCK_GetFreq(kCLOCK_McgIrc48MClk)
 #define ESP32_UART_IRQ          LPUART0_IRQn
-#define ESP32_UART_TX_PORT      PORTC
-#define ESP32_UART_TX_PIN       4U
-#define ESP32_UART_RX_PORT      PORTC
-#define ESP32_UART_RX_PIN       3U
+#define ESP32_UART_TX_PORT      PORTE
+#define ESP32_UART_TX_PIN       22U
+#define ESP32_UART_RX_PORT      PORTE
+#define ESP32_UART_RX_PIN       23U
 
 /*******************************************************************************
  * Application Constants

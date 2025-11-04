@@ -64,6 +64,9 @@ void PWM_Init(void)
     CLOCK_EnableClock(kCLOCK_Tpm0);
     CLOCK_SetTpmClock(1U);
 
+    /* Enable PORTC clock for buzzer */
+    CLOCK_EnableClock(kCLOCK_PortC);
+
     /* Configure buzzer pin for TPM PWM */
     PORT_SetPinMux(BUZZER_PORT, BUZZER_PIN, kPORT_MuxAlt4);
 
