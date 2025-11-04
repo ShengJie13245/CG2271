@@ -7,7 +7,8 @@
 
 /**
  * @file    CG2271_Assignment.c
- * @brief   Application entry point.
+ * @brief   Main application entry point - CG2271 Group Project
+ * @author  CG2271 Group
  */
 #include <stdio.h>
 #include "board.h"
@@ -15,15 +16,17 @@
 #include "pin_mux.h"
 #include "clock_config.h"
 #include "fsl_debug_console.h"
-/* TODO: insert other include files here. */
 
-/* TODO: insert other definitions and declarations here. */
+/* Include sensor modules */
+#include "ldr_sensor.h"
+// TODO: Add other sensor modules here as group members develop them
+// #include "temperature_sensor.h"
+// #include "sound_sensor.h"
 
 /*
- * @brief   Application entry point.
+ * @brief   Main application entry point
  */
 int main(void) {
-
     /* Init board hardware. */
     BOARD_InitBootPins();
     BOARD_InitBootClocks();
@@ -33,16 +36,19 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("Hello World\r\n");
+    PRINTF("=== CG2271 Group Project - Multi-Sensor System ===\r\n");
+    
+    /* Initialize all sensor modules */
+    LDR_Init();
+    
+    // TODO: Initialize other sensors as group members add them
+    // Temperature_Init();
+    // Sound_Init();
+    
+    PRINTF("All sensors initialized. Starting readings...\r\n");
 
-    /* Force the counter to be placed into memory. */
-    volatile static int i = 0 ;
-    /* Enter an infinite loop, just incrementing a counter. */
-    while(1) {
-        i++ ;
-        /* 'Dummy' NOP to allow source level single stepping of
-            tight while() loop */
-        __asm volatile ("nop");
-    }
-    return 0 ;
+    /* Start sensor readings */
+    LDR_StartReading(); // This function contains the main loop
+    
+    return 0;
 }
