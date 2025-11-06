@@ -17,10 +17,31 @@
 #include "fsl_gpio.h"
 #include "fsl_port.h"
 
+/* FreeRTOS includes */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+
 /* External function prototypes for buzzer control */
 extern void setBuzzer(int percent, int frequency);
 extern void startPWM(void);
 extern void stopPWM(void);
+
+/* External RTOS objects */
+extern QueueHandle_t actuator_command_queue;
+
+/* External type definitions */
+typedef enum tl {
+	RED, GREEN, BLUE
+} TLED;
+
+typedef struct {
+    uint8_t command_type; // 0 = LED flash, 1 = buzzer beep
+    TLED led_color;
+    uint16_t duration_ms;
+    uint16_t frequency; // for buzzer
+    uint8_t duty_cycle; // for buzzer
+} ActuatorCommand;
 
 /* Private variables */
 static volatile uint16_t last_adc_value = 0;
@@ -130,6 +151,8 @@ uint8_t LDR_ADCToPercentage(uint16_t adc_value) {
  * This function handles ADC conversion complete interrupts
  */
 void ADC0_IRQHandler(void) {
+    static uint32_t last_buzzer_time = 0;
+    
     NVIC_ClearPendingIRQ(ADC0_IRQn);
 
     if(ADC0->SC1[0] & ADC_SC1_COCO_MASK){
@@ -143,23 +166,29 @@ void ADC0_IRQHandler(void) {
         PRINTF("LDR ADC Value: %d, Voltage: %d.%03dV, Light Level: %d%%\r\n", 
                result, voltage_mv/1000, voltage_mv%1000, percentage);
         
-        // Check if it's very dark (ADC reading < 10) and trigger buzzer
+        // Check if it's dark (ADC reading < 100) and trigger buzzer  
         if(result < 10) {
-            PRINTF("Very dark detected! Buzzer beep!\r\n");
-            
-            // Trigger buzzer beep (800Hz, 60% duty cycle for alert)
-            setBuzzer(60, 800);
-            startPWM();
-            
-            // Brief delay to let the beep sound
-            // Use a simple loop instead of calling delay function
-            volatile uint32_t i;
-            for (i = 0; i < 300000; ++i) {
-                __asm("NOP");
+            // Debounce buzzer - only trigger once every 1 second
+            uint32_t current_time = xTaskGetTickCountFromISR();
+            if ((current_time - last_buzzer_time) > pdMS_TO_TICKS(1000)) {
+                last_buzzer_time = current_time;
+                
+                PRINTF("Very dark detected! Buzzer beep queued!\r\n");
+                
+                // Send buzzer command to actuator task (RTOS-safe)
+                ActuatorCommand cmd;
+                cmd.command_type = 1; // buzzer beep
+                cmd.led_color = RED; // not used for buzzer
+                cmd.duration_ms = 300;
+                cmd.frequency = 800;
+                cmd.duty_cycle = 60;
+                
+                BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+                // Non-blocking send to prevent ISR blocking
+                if(xQueueSendFromISR(actuator_command_queue, &cmd, &xHigherPriorityTaskWoken) == pdTRUE) {
+                    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+                }
             }
-            
-            // Stop the buzzer
-            stopPWM();
         }
     }
 }
