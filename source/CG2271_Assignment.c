@@ -1,3 +1,4 @@
+
 /*
  * Copyright 2016-2025 NXP
  * All rights reserved.
@@ -7,7 +8,7 @@
 
 /**
  * @file    CG2271_Assignment.c
- * @brief   Application entry point.
+ * @brief   Application entry point with FreeRTOS support.
  */
 #include <stdio.h>
 #include "board.h"
@@ -18,6 +19,12 @@
 #include "fsl_gpio.h"
 #include "fsl_port.h"
 
+/* FreeRTOS includes */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
+
 /* Include sensor modules */
 #include "ldr_sensor.h"
 
@@ -25,16 +32,31 @@
 #define SOUND_PIN      6    // PTC6 digital output from sound sensor
 
 // LED pin numbers (using your friend's configuration)
-#define RED_PIN		5	// PTD5
+#define RED_PIN		4	// PTD4
 #define GREEN_PIN	7	// PTD7
 #define BLUE_PIN	6	// PTD6
-
 // Buzzer pin numbers
 #define BUZZER_PIN 30   // PTE30 (Note: your friend had PTE31, but PTE30 is TPM0_CH3)
 
 typedef enum tl {
 	RED, GREEN, BLUE
 } TLED;
+
+/* RTOS Task and Queue Definitions */
+#define SOUND_QUEUE_LENGTH    2
+#define MAX_ACTUATOR_MSG_LEN  64
+
+// Message structure for actuator commands
+typedef struct {
+    uint8_t command_type; // 0 = LED flash, 1 = buzzer beep
+    TLED led_color;
+    uint16_t duration_ms;
+    uint16_t frequency; // for buzzer
+    uint8_t duty_cycle; // for buzzer
+} ActuatorCommand;
+
+/* RTOS Objects */
+QueueHandle_t actuator_command_queue;
 
 /* Function prototypes */
 void initSoundSensor(void);
@@ -49,6 +71,10 @@ void ledOn(TLED led);
 void ledOff(TLED led);
 void PORTC_PORTD_IRQHandler(void);
 void delay(uint32_t count);
+
+/* RTOS Task prototypes */
+static void sensorTask(void *pvParameters);
+static void actuatorTask(void *pvParameters);
 
 /*
  * @brief   Application entry point.
@@ -213,16 +239,37 @@ void ledOff(TLED led) {
     }
 }
 
+
+SemaphoreHandle_t ledSema;
+TLED currentLED = GREEN;
+
 void PORTC_PORTD_IRQHandler(void) {
+    static uint32_t last_sound_time = 0;
+
     if (PORTC->ISFR & (1 << SOUND_PIN)) {
         PORTC->ISFR = (1 << SOUND_PIN);  // clear flag
         
-        // Flash red LED (turn on, brief delay, turn off)
-        ledOn(RED);
-        delay(200000);  // Flash duration
-        ledOff(RED);
-        
-        PRINTF("Sound detected! Red LED flash!\r\n");
+        // Simple debouncing - ignore events within 500ms of last event
+        uint32_t current_time = xTaskGetTickCountFromISR();
+        if ((current_time - last_sound_time) > pdMS_TO_TICKS(500)) {
+            last_sound_time = current_time;
+
+            /*
+            // Send LED flash command directly to actuator task (eliminate delay)
+            ActuatorCommand cmd;
+            cmd.command_type = 0; // LED flash
+            cmd.led_color = RED;
+            cmd.duration_ms = 200;
+            cmd.frequency = 0;
+            cmd.duty_cycle = 0;
+            */
+
+            PRINTF("Sound Detected\r\n");
+
+            BaseType_t hpw = pdFALSE;
+            xSemaphoreGiveFromISR(ledSema, &hpw);
+			portYIELD_FROM_ISR(hpw);
+        }
     }
 }
 
@@ -233,10 +280,103 @@ void delay(uint32_t count) {
     }
 }
 
+/* RTOS Task Implementations */
+
+/**
+ * @brief Sensor Task - Handles LDR sensor readings
+ * Priority: 1 (Lower priority - periodic readings only)
+ * Period: 1000ms
+ */
+static void sensorTask(void *pvParameters) {
+    (void)pvParameters; // Suppress unused parameter warning
+
+    PRINTF("Sensor Task started\r\n");
+
+    while(1) {
+        // Trigger LDR sensor reading (ADC interrupt will handle the result)
+        LDR_TriggerReading();
+
+        // Wait 1 second before next sensor reading
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+/**
+ * @brief Actuator Task - Handles LED animations and buzzer control
+ * Priority: 1 (Lower priority than sensors)
+ * Event-driven by queue messages
+ */
+static void actuatorTask(void *pvParameters) {
+    (void)pvParameters; // Suppress unused parameter warning
+
+    PRINTF("Actuator Task started\r\n");
+
+    while(1) {
+        ActuatorCommand cmd;
+        if(xQueueReceive(actuator_command_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+            switch(cmd.command_type) {
+            	/*
+                case 0: // LED flash
+                    ledOn(cmd.led_color);
+                    vTaskDelay(pdMS_TO_TICKS(cmd.duration_ms));
+                    ledOff(cmd.led_color);
+                    PRINTF("LED flash completed\r\n");
+                    break;
+                */
+
+                case 1: // Buzzer beep
+                    setBuzzer(cmd.duty_cycle, cmd.frequency);
+                    startPWM();
+                    vTaskDelay(pdMS_TO_TICKS(cmd.duration_ms));
+                    stopPWM();
+                    PRINTF("Buzzer beep completed\r\n");
+                    break;
+
+                default:
+                    PRINTF("Unknown actuator command: %d\r\n", cmd.command_type);
+                    break;
+            }
+        }
+    }
+}
+
+static void ledTask(void *p){
+	while(1) {
+		if(xSemaphoreTake(ledSema,portMAX_DELAY) == pdTRUE){
+			if(currentLED == RED){
+				// Toggle the RED LED
+				ledOff(RED);
+				delay(50000);
+				ledOn(RED);
+				delay(50000);
+				ledOff(RED);
+				delay(50000);
+				ledOn(RED);
+			} else if(currentLED == BLUE){
+				ledOff(BLUE);
+				delay(50000);
+				ledOn(BLUE);
+				delay(50000);
+				ledOff(BLUE);
+				delay(50000);
+				ledOn(BLUE);
+			} else if(currentLED == GREEN){
+				ledOff(GREEN);
+				delay(50000);
+				ledOn(GREEN);
+				delay(50000);
+				ledOff(GREEN);
+				delay(50000);
+				ledOn(GREEN);
+			}
+		}
+	}
+}
+
 int main(void) {
 
     /* Init board hardware. */
-    BOARD_InitBootPins();
+	BOARD_InitBootPins();
     BOARD_InitBootClocks();
     BOARD_InitBootPeripherals();
 #ifndef BOARD_INIT_DEBUG_CONSOLE_PERIPHERAL
@@ -244,7 +384,7 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("=== CG2271 Multi-Sensor System ===\r\n");
+    PRINTF("=== CG2271 Multi-Sensor System with FreeRTOS ===\r\n");
     PRINTF("LDR Sensor: PTE20 (ADC0_SE0)\r\n");
     PRINTF("Sound Sensor: PTC6 (Digital)\r\n");
     PRINTF("Buzzer: PTE30 (TPM0_CH3)\r\n");
@@ -269,7 +409,15 @@ int main(void) {
     initSoundSensor();
     PRINTF("Sound sensor initialized\r\n");
     
-    // Test LEDs briefly
+    /* Create RTOS queues */
+    actuator_command_queue = xQueueCreate(SOUND_QUEUE_LENGTH, sizeof(ActuatorCommand));
+
+    if(actuator_command_queue == NULL) {
+        PRINTF("Failed to create actuator queue!\r\n");
+        while(1); // Halt on error
+    }
+
+    // Test LEDs briefly (using actuator task commands)
     PRINTF("Testing LEDs...\r\n");
     ledOn(RED);
     delay(500000);
@@ -282,17 +430,25 @@ int main(void) {
     ledOff(BLUE);
     
     PRINTF("All sensors and actuators ready!\r\n");
-    PRINTF("Make some noise to test sound detection with buzzer beep!\r\n");
+    PRINTF("Starting RTOS tasks...\r\n");
 
-    /* Enter an infinite loop with controlled readings */
+    //Init Semaphores
+    ledSema = xSemaphoreCreateBinary();
+
+    /* Create RTOS tasks */
+    xTaskCreate(sensorTask, "SensorTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL);
+    xTaskCreate(actuatorTask, "ActuatorTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
+    xTaskCreate(ledTask, "ledSensorTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
+
+    PRINTF("Make some noise to test sound detection with LED flash!\r\n");
+
+    /* Start the FreeRTOS scheduler */
+    vTaskStartScheduler();
+
+    /* Should never reach here if scheduler starts successfully */
+    PRINTF("Scheduler failed to start!\r\n");
     while(1) {
-        // Trigger a single ADC reading for LDR (using modular function)
-        LDR_TriggerReading();
-        
-        // Wait for a reasonable interval between readings (about 1 second)
-        delay(1000000); // Adjust delay as needed for your desired reading frequency
+        // Fallback infinite loop
     }
-    return 0 ;
+    return 0;
 }
-
-
