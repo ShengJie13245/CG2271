@@ -18,6 +18,7 @@
 #include "fsl_debug_console.h"
 #include "fsl_gpio.h"
 #include "fsl_port.h"
+#include <string.h>
 
 /* FreeRTOS includes */
 #include "FreeRTOS.h"
@@ -34,9 +35,22 @@
 #define BLUE_PIN	6
 #define BUZZER_PIN 30
 
+/* UART definitions */
+#define BAUD_RATE 9600
+#define UART_TX_PTE22 	22
+#define UART_RX_PTE23 	23
+#define UART2_INT_PRIO	128
+#define MAX_MSG_LEN		256
+#define QLEN	5
+
 typedef enum tl {
 	RED, GREEN, BLUE
 } TLED;
+
+/* UART message structure */
+typedef struct tm {
+	char message[MAX_MSG_LEN];
+} TMessage;
 
 
 /* Function prototypes */
@@ -56,6 +70,13 @@ void delay(uint32_t count);
 static void sensorTask(void *pvParameters);
 static void ledTask(void *pvParameters);
 static void buzzerTask(void *pvParameters);
+static void recvTask(void *pvParameters);
+static void sendTask(void *pvParameters);
+
+/* UART function prototypes */
+void initUART2(uint32_t baud_rate);
+void sendMessage(char *message);
+void UART2_FLEXIO_IRQHandler(void);
 
 /*
  * @brief   Application entry point.
@@ -180,6 +201,10 @@ SemaphoreHandle_t ledSema;
 SemaphoreHandle_t buzzerSema;
 TLED currentLED = GREEN;
 
+/* UART global variables */
+char send_buffer[MAX_MSG_LEN];
+QueueHandle_t uart_queue;
+
 void PORTC_PORTD_IRQHandler(void) {
     static uint32_t last_sound_time = 0;
 
@@ -203,6 +228,90 @@ void delay(uint32_t count) {
     for (i = 0; i < count; ++i) {
         __asm("NOP");
     }
+}
+
+/* UART Functions */
+void initUART2(uint32_t baud_rate)
+{
+	NVIC_DisableIRQ(UART2_FLEXIO_IRQn);
+	//enable clock to UART2 and PORTE
+	SIM->SCGC4 |= SIM_SCGC4_UART2_MASK;
+	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+	//Ensure Tx and Rx are disabled before configuration
+	UART2->C2 &= ~((UART_C2_TE_MASK) | (UART_C2_RE_MASK));
+	//connect UART pins for PTE22, PTE23
+	PORTE->PCR[UART_TX_PTE22] &= ~PORT_PCR_MUX_MASK;
+	PORTE->PCR[UART_TX_PTE22] |= PORT_PCR_MUX(4);
+	PORTE->PCR[UART_RX_PTE23] &= ~PORT_PCR_MUX_MASK;
+	PORTE->PCR[UART_RX_PTE23] |= PORT_PCR_MUX(4);
+	// Set the baud rate
+	uint32_t bus_clk = CLOCK_GetBusClkFreq();
+	// This version of sbr does integer rounding.
+	uint32_t sbr = (bus_clk + (baud_rate * 8)) / (baud_rate * 16);
+	// Set SBR. Bits 8 to 12 in BDH, 0-7 in BDL.
+	// MUST SET BDH FIRST!
+	UART2->BDH &= ~UART_BDH_SBR_MASK;
+	UART2->BDH |= ((sbr >> 8) & UART_BDH_SBR_MASK);
+	UART2->BDL = (uint8_t) (sbr &0xFF);
+	// Disable loop mode
+	UART2->C1 &= ~UART_C1_LOOPS_MASK;
+	UART2->C1 &= ~UART_C1_RSRC_MASK;
+	// Disable parity
+	UART2->C1 &= ~UART_C1_PE_MASK;
+	// 8-bit mode
+	UART2->C1 &= ~UART_C1_M_MASK;
+	//Enable RX interrupt
+	UART2->C2 |= UART_C2_RIE_MASK;
+	// Enable the receiver
+	UART2->C2 |= UART_C2_RE_MASK;
+	NVIC_SetPriority(UART2_FLEXIO_IRQn, UART2_INT_PRIO);
+	NVIC_ClearPendingIRQ(UART2_FLEXIO_IRQn);
+	NVIC_EnableIRQ(UART2_FLEXIO_IRQn);
+}
+
+void UART2_FLEXIO_IRQHandler(void)
+{
+	// Send and receive pointers
+	static int recv_ptr=0, send_ptr=0;
+	char rx_data;
+	char recv_buffer[MAX_MSG_LEN];
+//VIC_ClearPendingIRQ(UART2_FLEXIO_IRQn);
+	if(UART2->S1 & UART_S1_TDRE_MASK) // Send data
+	{
+		if(send_buffer[send_ptr] == '\0') {
+			send_ptr = 0;
+			// Disable the transmit interrupt
+			UART2->C2 &= ~UART_C2_TIE_MASK;
+			// Disable the transmitter
+			UART2->C2 &= ~UART_C2_TE_MASK;
+		}
+		else {
+			UART2->D = send_buffer[send_ptr++];
+		}
+	}
+	if(UART2->S1 & UART_S1_RDRF_MASK)
+	{
+		TMessage msg;
+		rx_data = UART2->D;
+		recv_buffer[recv_ptr++] = rx_data;
+		if(rx_data == '\n') {
+			// Copy over the string
+			BaseType_t hpw;
+			recv_buffer[recv_ptr]='\0';
+			strncpy(msg.message, recv_buffer, MAX_MSG_LEN);
+			xQueueSendFromISR(uart_queue, (void *)&msg, &hpw);
+			portYIELD_FROM_ISR(hpw);
+			recv_ptr = 0;
+		}
+	}
+}
+
+void sendMessage(char *message) {
+	strncpy(send_buffer, message, MAX_MSG_LEN);
+	// Enable the TIE interrupt
+	UART2->C2 |= UART_C2_TIE_MASK;
+	// Enable the transmitter
+	UART2->C2 |= UART_C2_TE_MASK;
 }
 
 static void sensorTask(void *pvParameters) {
@@ -265,6 +374,36 @@ static void buzzerTask(void *p){
     }
 }
 
+static void recvTask(void *p) {
+	while(1) {
+		TMessage msg;
+		if(xQueueReceive(uart_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
+			PRINTF("Received message: %s\r\n", msg.message);
+			if (msg.message[0] == '2') {
+				ledOff(GREEN);
+				ledOff(RED);
+				ledOn(BLUE);
+				currentLED = BLUE;
+				PRINTF("changed LED to blue!\r\n");
+			}
+			if (msg.message[0] == '1') {
+				ledOff(BLUE);
+				ledOff(RED);
+				ledOn(GREEN);
+				currentLED = GREEN;
+				PRINTF("changed LED to green!\r\n");
+			}
+		}
+	}
+}
+
+static void sendTask(void *p) {
+	while(1) {
+		sendMessage("1\n");
+		vTaskDelay(pdMS_TO_TICKS(2000));
+	}
+}
+
 int main(void) {
     BOARD_InitBootPins();
     BOARD_InitBootClocks();
@@ -278,12 +417,15 @@ int main(void) {
     PRINTF("Sound Sensor: PTC6 (Digital)\r\n");
     PRINTF("Buzzer: PTE30 (TPM0_CH3)\r\n");
     PRINTF("LEDs: PTD4(Red), PTD7(Green), PTD6(Blue)\r\n");
+    PRINTF("UART2: PTE22(TX), PTE23(RX) - 9600 baud\r\n");
     
     initGPIO();
     setTPMClock();
     initPWM();
     LDR_Init();
     initSoundSensor();
+    initUART2(BAUD_RATE);
+    PRINTF("UART2 initialized\r\n");
     
     PRINTF("Testing LEDs...\r\n");
     ledOn(RED);
@@ -300,12 +442,16 @@ int main(void) {
 
     ledSema = xSemaphoreCreateBinary();
     buzzerSema = xSemaphoreCreateBinary();
+    uart_queue = xQueueCreate(QLEN, sizeof(TMessage));
 
-    xTaskCreate(sensorTask, "SensorTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL);
-    xTaskCreate(ledTask, "ledTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
-    xTaskCreate(buzzerTask, "buzzerTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
+    xTaskCreate(sensorTask, "SensorTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
+    xTaskCreate(ledTask, "ledTask", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL);
+    xTaskCreate(buzzerTask, "buzzerTask", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL);
+    xTaskCreate(recvTask, "recvTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL);
+    xTaskCreate(sendTask, "sendTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL);
 
     PRINTF("Make some noise to test sound detection!\r\n");
+    PRINTF("UART2 will send messages every 2 seconds and display received messages\r\n");
 
     vTaskStartScheduler();
 
