@@ -82,7 +82,7 @@ void ADC0_IRQHandler(void) {
         uint16_t voltage_mv = LDR_ADCToVoltage(result);
         uint8_t percentage = LDR_ADCToPercentage(result);
         
-        if(result < 450) {
+        if(result < 100) {
             PRINTF("LDR ADC Value: %d, Voltage: %d.%03dV, Light Level: BRIGHT\r\n", 
                    result, voltage_mv/1000, voltage_mv%1000, percentage);
         } else {
@@ -90,11 +90,11 @@ void ADC0_IRQHandler(void) {
                    result, voltage_mv/1000, voltage_mv%1000, percentage);
         }
         
-        if(result < 450) {
+        if(result > 100) {
             uint32_t current_time = xTaskGetTickCountFromISR();
             if ((current_time - last_buzzer_time) > pdMS_TO_TICKS(800)) {
                 last_buzzer_time = current_time;
-                PRINTF("Bright light detected! Buzzer triggered!\r\n");
+                PRINTF("Lighting is too dark! Buzzer triggered!\r\n");
 
                 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
                 xSemaphoreGiveFromISR(buzzerSema, &xHigherPriorityTaskWoken);
