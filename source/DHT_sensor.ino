@@ -14,48 +14,46 @@ Serial.begin(9600);
 Serial1.begin(9600, SERIAL_8N1, NEW_RX_PIN, NEW_TX_PIN);
 delay(1000);
 
+Serial.println("=================================");
+Serial.println("Initalize DHT");
+
+if (dht11.read(pinDHT11, &temperatureS, &humidityS, dataS)) {
+        Serial.print("Read DHT11 failed");
+        return;
+    }
+delay(1000);
+Serial.println("=================================");
+
 }
 
 void loop() {
 // start working...
-Serial.println("=================================");
-Serial.println("Sample DHT11...");
-
-if (readX == 1) {
-    if (dht11.read(pinDHT11, &temperatureS, &humidityS, dataS)) {
-        Serial.print("Read DHT11 failed");
-        return;
-    }
-    readX = 0;
-    delay(1000);
-}
-
 // read with raw sample data.
 byte temperature = 0;
 byte humidity = 0;
 byte data[40] = {0};
+
+Serial.println("Waiting for request");
+while(Serial1.available() <=0);
+String x = Serial1.readString();
+
+Serial.print("Request received from MCXC444: ");
+Serial.print(x);
+
+
+Serial.println("=================================");
+Serial.println("Sample DHT11");
 if (dht11.read(pinDHT11, &temperature, &humidity, data)) {
     Serial.print("Read DHT11 failed");
     return;
 }
-Serial.print("Avg humidity ");
-Serial.println((int)humidityS);
-Serial.print("Sample RAW Bits: ");
-for (int i = 0; i < 40; i++) {
-    Serial.print((int)data[i]);
-    if (i > 0 && ((i + 1) % 4) == 0) {
-    Serial.print(' ');
-    }
-}
-Serial.println("");
+Serial.print("Baseline humidity ");
+Serial.print((int)humidityS); Serial.println("%"); 
 
-while(Serial1.available() <=0);
+Serial.print("Current Humidity: ");
+Serial.print((int)humidity); Serial.println("%");
 
-String x = Serial1.readString();
-Serial.print("Request received from MCXC444: ");
-Serial.print(x);
-Serial.print((int)temperature); Serial.print(" *C, ");
-Serial.print((int)humidity); Serial.println(" %");
+Serial.print("Message to be sent: ");
 if ((int)humidity > (int)humidityS + 3) {
     Serial.println("2");
     Serial1.println("2");
@@ -69,6 +67,7 @@ else {
     Serial1.println("1");
     }
 
+Serial.println("=================================");
 // DHT11 sampling rate is 1HZ.
 delay(1000);
 }
